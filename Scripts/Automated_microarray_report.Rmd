@@ -1,0 +1,382 @@
+---
+title: "Microarray Analysis"
+author: "Alejandro Gil"
+date: "16 de octubre de 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Parameters of the analysis
+
+In this chunk of code we will set up the general parameters for the automated analysis:
+
+- path: a variable that stores the path of the raw data.
+
+- source: a variable which value stores the software that have adquired the raw data.
+
+- targets: a variable that stores the path for the targets.txt files. This file MUST content 3 colums, and the header: FileName	Cy3	Cy5.
+
+**Importan: is hardly recomendable to put this Rmd file in the same directory than the raw data, or one level above of raw data.**
+
+
+```{r}
+
+path <- "Salmon_raw_data/Liver/"
+
+source <- 'bluefuse'
+
+targets <- "Targets.txt"
+
+```
+
+
+# Package loading and initial parameters setting
+
+```{r, message=FALSE}
+
+library(limma)
+library(scatterplot3d)
+library(Vennerable)
+library(xlsx)
+library(gplots)
+
+
+targets <- readTargets(targets)
+
+```
+
+# Microarray processing
+
+This part of the code will preprocess the raw data. We will load the two channels of the microarray.
+
+```{r, include= F}
+# reading the raw data
+
+RG <- read.maimages(targets, source = 'bluefuse')
+
+```
+
+# Quality Control
+
+This part of the report will generate plots in order to see the quality of our data. 
+
+Plots displayed here:
+
+- MAplots: A plot that shold be centered in 0 in the y axis.
+
+- Boxplots: Plot displaying the distribution of the data for each sample and each channel. 
+
+```{r}
+
+# MAplot of raw data
+
+# This function generates a serie of PNG files in the same directory of this
+# Rmd file
+
+plotMA3by2(RG)
+
+# Boxplots of the channels
+
+# Green channel
+
+boxplot(data.frame(log2(RG$G)),main="Green channel", col = "green",
+        ylab = 'log2(Intensity)', xaxt='n')
+
+# Red channel
+
+boxplot(data.frame(log2(RG$R)),main="Red channel", col = "firebrick",
+        ylab = 'log2(Intensity)', xaxt='n')
+
+
+```
+
+The interpretation of the plots is clear. If we see the targets file, we see that in all files the green channel is the channel where reference DNA was hibrydazed. That's why the boxplot of the green channel is more or less uniform. In the other side we see that the red channel is the one containing the DNA from samples, making less uniform and more variable the boxplot of the red channel. Nevertheless, this is the raw data. We neeed to normlize the data. Taking into account the PNG files generated and the boxplots, we see that we are working with poor quality data.
+
+# Normalization
+
+
+This section will deal with the normalization of the data, and how data changes after that treatment. Normalization will try to deal with the poor quality of the data.
+
+This normalization has 3 main steps, and the output of each step will be analyzed. These 3 steps are:
+
+- Background correction.
+
+- Within array normalization
+
+- Between array normalization
+
+## Background correction
+
+```{r, include=F}
+
+# Correction of the background
+
+RG_normexp <- backgroundCorrect(RG, method="normexp", offset=50)
+
+```
+
+```{r}
+
+# MAplot after background correction
+
+limma::plotMA(RG_normexp, main = "After Background correction")
+
+
+```
+The MAplot shows that there is a substantial change in the MAplot but it is not enoght to correct the poor quality of the data. Nevertheless, the normalization is not ended yet.
+
+```{r}
+# Densities of both color channels of all samples
+
+plotDensities(RG_normexp,
+              main = 'R & G densities \n after background correction')
+```
+
+The Density plot help us to understand how samples behave in both channels. We see that the red channel wich have the important information is very noisy. Next steps of the normalization will try to solve this.
+
+
+## Within array normalization
+
+
+```{r}
+# Normalization within arrays
+
+MA <- normalizeWithinArrays(RG_normexp, method="loess")
+
+# Density plot
+
+plotDensities(MA, main = 'R & G densities \n after withing array normalization')
+
+```
+
+The density plot becomes more consistent using this normalization, and samples beging to behave similar.
+
+```{r}
+# MAplot
+
+limma::plotMA(MA, main = 'MAplot after Within array normalization')
+```
+
+The MAplot has changed and now is centered in the 0, but we still have dispersion of the data.
+
+## Between array normalization
+
+Finally, the final step of the normalization will be aplied.
+
+```{r}
+# Between arrays normalization
+
+MA_norm <- normalizeBetweenArrays(MA, method="Aquantile")
+
+# Density plot
+
+plotDensities(MA_norm, 
+              main = 'R & G densities \n after between array normalization' ) 
+```
+
+The density plot has become much consistent that in the begining, but still is not ideal, and we must be carefull with the results that will be obtained from this analysis.
+
+```{r}
+# MAplot
+
+limma::plotMA(MA_norm, main = 'MAplot after between array normalization' )
+```
+
+The final MAplot is centered at 0 and we see that the tail of the plot is still centered at 0. Despite this, the MAplot have dispersion, and taking into account this plot and the density plot we have to be careful with the results from this data.
+
+## PCA plots
+
+This part of the analysis will use Principal Component Analysis in order to see if the samples can be separed using this analysis.
+
+```{r}
+## PCA analysis
+
+# Creation of the design matrix
+
+design <- modelMatrix(targets, ref = 'Ref')
+
+rownames(design) <- c("AC1","AC2","CA1","AT1",
+                      "CO1","AC3","CA2","CA3",
+                      "AT2","CO2","CA4","AT3",
+                      "AT4","CO3","CO4","AC4",
+                      "AC5","CA5","AT5","CO5")
+
+samples <- c("AC1","AC2","CA1","AT1",
+             "CO1","AC3","CA2","CA3",
+             "AT2","CO2","CA4","AT3",
+             "AT4","CO3","CO4","AC4",
+             "AC5","CA5","AT5","CO5")
+
+# Definitions of the colors that will be used in the plot
+
+colors<-c("red","green","blue","black") 
+
+col_groups <- rep(NA, 20)
+
+col_groups[grep('AC', samples)] <- 'red'
+
+col_groups[grep('CO', samples)] <- 'black'
+
+col_groups[grep('AT', samples)] <- 'blue'
+
+col_groups[grep('CA', samples)] <- 'coral'
+
+
+
+summary(pca.filt <- prcomp(t(MA_norm$A), scale = TRUE ))
+
+pca3d<-scatterplot3d(x=pca.filt$x[,1],y=pca.filt$x[,2],z=pca.filt$x[,3],
+                     xlab='PC1', ylab='PC2', zlab='PC3',
+                     main='PCA of Salmon Analysis',
+                     pch=16,col.grid="lightblue",
+                     color = col_groups)
+legend('topright', legend = c("AC", "Control", "AT", "CA"),
+       pch = 16, col = c('red','black','blue','coral'))
+
+```
+
+PCA analysis is not able to separate the samples according to the treatment.
+
+# Differential Expression Analysis
+
+This part of the analysis will deal with the data in order to obtain the Differentially Expressed Genes. This part will be based on the limma R package for microarray analysis.
+
+```{r}
+# Linear model fit, we use the design of the experiment
+
+fit <- lmFit(MA_norm, design)
+
+# we will define the contrast matrix. We will compare all the compounds against the control group
+
+contrast.matrix <- makeContrasts(AC - Cntrl,
+                                 AT - Cntrl,
+                                 CA - Cntrl,
+                                 levels = design)
+
+fit2 <- contrasts.fit(fit, contrast.matrix)
+
+fit2 <- eBayes(fit2)
+
+# Finally we will obtain the tables with the results of each contrast
+
+Ac_Cntrl <- topTable(fit2, coef = "AC - Cntrl", number = Inf)
+
+AC_DEGs <- rownames(Ac_Cntrl[Ac_Cntrl$P.Value < 0.01 & abs(Ac_Cntrl$logFC) > 1,])
+
+At_Cntrl <- topTable(fit2, coef = "AT - Cntrl", number = Inf)
+
+At_DEGs <- rownames(At_Cntrl[At_Cntrl$P.Value < 0.01 & abs(At_Cntrl$logFC) > 1,])
+
+Ca_cntrl <- topTable(fit2, coef = "CA - Cntrl", number = Inf)
+
+CA_DEGs <- rownames(Ca_cntrl[Ca_cntrl$P.Value < 0.01 & abs(Ca_cntrl$logFC) > 1,])
+
+summary(Ca_cntrl$adj.P.Val)
+
+```
+
+The FDR of the results is not statistically significant at all. For DEGs selection we have taken a threshold of 0.01 for the p value. 
+
+**IMPORTANT: since we can't use FDR we can not extract clear results from this data. We may find tendencies, but more analysis is needed. The poor quality of the array and this experiment hardly reproducible.**
+
+## Venn plots of the results
+
+Venn plots are very usefull in order to know how the set of DEGs interacts with each other. This can be usefull in order to discover common mechanisms.
+
+```{r}
+names <- c('AC', 'AT', 'CA')
+
+list_DEGs <- list(AC_DEGs, At_DEGs, CA_DEGs)
+
+plot(Venn(list_DEGs, SetNames = names))
+```
+
+## Generation of usefull files and tables
+
+This section will export the results in Excell formats and other formats in order to make further analysis.
+
+## Fasta annotation
+
+We will export the sequence of the DEGs in order to use Blast2Go software. This set of functions will generate the files in the working directory of this automated report file.
+
+```{r}
+# In this annotation file we have all the DNA sequences of the probes
+
+sequeces <- read.table('cGRASP_16k_sequences.adf.txt', 
+                       sep = '\t', header = T,
+                       skip = 14, row.names = 1)
+
+# We will obtain the sequences for the AC DEGs and then we will write them to a FASTA file using the seqinr::write.fasta
+# function.
+
+AC_seqs <- sequeces[AC_DEGs,]
+
+AC_seqs <- AC_seqs[!(AC_seqs$Reporter.Sequence== ''),] # we wliminate those DEGs that don't have sequence
+
+AC_seqs <- AC_seqs[!(AC_seqs$Reporter.Database.Entry..genbank. == ''),] # and those that dont have gene ID (only one)
+
+
+
+seqinr::write.fasta(as.list(AC_seqs$Reporter.Sequence), 
+                    names = AC_seqs$Reporter.Database.Entry..genbank.,
+                    file.out = 'AC_DEGs.FASTA',open = 'w' )
+
+# We will repeat this porcess for all the DEGs and groups. Now the AT group
+
+AT_seqs <- sequeces[At_DEGs,]
+
+AT_seqs <- AT_seqs[!(AT_seqs$Reporter.Sequence== ''),] # we wliminate those DEGs that don't have sequence
+
+AT_seqs <- AT_seqs[!(AT_seqs$Reporter.Database.Entry..genbank. == ''),] # and those that dont have gene ID 
+
+
+seqinr::write.fasta(as.list(AT_seqs$Reporter.Sequence), 
+                    names = AT_seqs$Reporter.Database.Entry..genbank.,
+                    file.out = 'AT_DEGs.FASTA',open = 'w' )
+
+# CA group
+
+CA_seqs <- sequeces[CA_DEGs,]
+
+CA_seqs <- CA_seqs[!(CA_seqs$Reporter.Sequence== ''),] # we wliminate those DEGs that don't have sequence
+
+CA_seqs <- CA_seqs[!(CA_seqs$Reporter.Database.Entry..genbank. == ''),] # and those that dont have gene ID 
+
+
+seqinr::write.fasta(as.list(CA_seqs$Reporter.Sequence), 
+                    names = CA_seqs$Reporter.Database.Entry..genbank.,
+                    file.out = 'CA_DEGs.FASTA',open = 'w' )
+
+## Finally we will get the background of the array, all the probes
+## so we can use blast2go in order to make an enrichment analysis
+
+background <- sequeces[!(sequeces$Reporter.Sequence == ''),]
+
+background <- background[!(background$Reporter.Database.Entry..genbank. == ''),]
+
+seqinr::write.fasta(as.list(background$Reporter.Sequence),
+                    names = background$Reporter.Database.Entry..genbank.,
+                    file.out = 'background.fasta', open = 'w')
+```
+
+## Excell exportation
+
+Excell is widely used by researchers and it's usefull to have this information in xlsx format. In this section the generated files are generated in the same working directory than this report file.
+
+```{r}
+## CA data
+
+write.xlsx(Ca_cntrl[CA_DEGs,], file = 'CA_candidates.xlsx')
+
+## AT group
+
+write.xlsx(At_Cntrl[At_DEGs,], file = 'AT_candidates.xlsx')
+
+## AC group
+
+write.xlsx(Ac_Cntrl[AC_DEGs,], file = 'AC_candidates.xlsx')
+```
+
